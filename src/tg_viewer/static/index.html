@@ -187,29 +187,36 @@ const fmtDay = (d) => new Date(d.length === 10 ? `${d}T00:00` : d).toLocaleDateS
 const STATIC_SITE = false;
 let pyCall;
 async function loadPy() {
-  $('#status').textContent = 'Loading Python runtime (first load ~15 MB)…';
+  $('#status').textContent = 'Loading Python runtime (first visit downloads ~12 MB)…';
   const { loadPyodide } = await import('https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.mjs');
   const py = await loadPyodide();
   await py.loadPackage('micropip');
-  await py.pyimport('micropip').install(['flask', 'vaderSentiment']);
+  // vaderSentiment only needs `requests` for its interactive demo; skipping it saves 5 packages.
+  await py.runPythonAsync(`import micropip
+await micropip.install('flask')
+await micropip.install('vaderSentiment', deps=False)`);
   py.FS.mkdirTree('/home/pyodide/tg_viewer');
   for (const f of ['__init__.py', 'app.py', 'analysis.py']) {
     py.FS.writeFile(`/home/pyodide/tg_viewer/${f}`, await (await fetch(`tg_viewer/${f}`)).text());
   }
-  return py.runPython(`
+  const call = py.runPython(`
 from tg_viewer.app import app
 _client = app.test_client()
 def call(method, path, body):
     r = _client.open(path, method=method, data=body)
     return r.status_code, r.get_data(as_text=True)
 call`);
+  if ($('#status').textContent.startsWith('Loading Python')) $('#status').textContent = 'Ready';
+  return call;
 }
+// Retry on the next request if the runtime failed to load (e.g. offline).
+const ensurePy = () => (pyCall ??= loadPy().catch((e) => { pyCall = null; throw e; }));
 
 async function api(path, opts) {
   if (STATIC_SITE) {
-    pyCall ??= loadPy();
+    const call = await ensurePy();
     const body = opts?.body ? await opts.body.text() : null;
-    const [status, text] = (await pyCall)(opts?.method || 'GET', path, body).toJs();
+    const [status, text] = call(opts?.method || 'GET', path, body).toJs();
     const j = JSON.parse(text);
     if (status >= 400) throw new Error(j.error || `HTTP ${status}`);
     return j;
@@ -780,6 +787,8 @@ function renderStats(s) {
   panel.replaceChildren(grid);
 }
 
+// Start the in-browser runtime now so it's mostly loaded by the time a file is picked.
+if (STATIC_SITE) ensurePy().catch((e) => { $('#status').textContent = `Could not load Python runtime: ${e.message}`; });
 $('#file').onchange = (e) => e.target.files[0] && importFile(e.target.files[0]);
 document.addEventListener('dragover', (e) => { e.preventDefault(); $('#drop')?.classList.add('over'); });
 document.addEventListener('dragleave', () => $('#drop')?.classList.remove('over'));

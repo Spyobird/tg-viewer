@@ -2,7 +2,7 @@
 
 Browse, search and analyse your Telegram chat history from a Telegram Desktop JSON export.
 
-**Live version:** https://spyobird.github.io/tg-viewer/ — everything runs in your browser (via [Pyodide](https://pyodide.org)); your export is never uploaded anywhere. The first load downloads a ~15 MB Python runtime.
+**Live version:** https://spyobird.github.io/tg-viewer/ — everything runs in your browser (via [Pyodide](https://pyodide.org)); your export is never uploaded anywhere. The first visit downloads a ~12 MB Python runtime (cached afterwards); it starts loading as soon as the page opens.
 
 ## Exporting your data from Telegram Desktop
 
