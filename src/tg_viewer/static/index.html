@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telegram Viewer</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --surface: #fff; --ink: #1d2129; --ink-2: #5b6270; --ink-3: #8a909c;
+    --line: #e3e5ea; --accent: #2a7ab8; --empty: #eef0f3; --bubble: #fff; --hover: #eef3f8;
+    /* Per-person categorical palette, fixed order (CVD-validated adjacent pairs); 9th+ sender folds into Other. */
+    --c1: #2a78d6; --c2: #eb6834; --c3: #1baf7a; --c4: #eda100; --c5: #e87ba4; --c6: #008300; --c7: #6250d6; --c8: #e34948; --c-other: #a9aeb7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121418; --surface: #1b1e24; --ink: #e8eaee; --ink-2: #a6acb8; --ink-3: #737a87;
+      --line: #2c3039; --accent: #5aa6e0; --empty: #23272e; --bubble: #22262d; --hover: #252b34;
+      --c1: #3987e5; --c2: #d95926; --c3: #199e70; --c4: #c98500; --c5: #d55181; --c6: #008300; --c7: #9085e9; --c8: #e66767; --c-other: #5d636e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--ink); height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; flex: 1; }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #status { color: var(--ink-2); font-size: 13px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  aside { width: 260px; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--line); }
+  aside button { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; border-bottom: 1px solid var(--line); padding: 10px 14px; }
+  aside button:hover { background: var(--hover); }
+  aside button[aria-current="true"] { background: var(--hover); box-shadow: inset 3px 0 var(--accent); }
+  aside small { display: block; color: var(--ink-3); }
+  #content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .tabs { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--line); background: var(--surface); }
+  .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--ink-2); }
+  .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+  .tabs input { margin-left: auto; margin-bottom: 6px; font: inherit; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); width: 240px; }
+  .panel { flex: 1; overflow-y: auto; padding: 16px; }
+  .empty { margin: auto; text-align: center; color: var(--ink-2); max-width: 420px; padding: 60px 16px; }
+  .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 40px 20px; }
+  .drop.over { border-color: var(--accent); }
+  /* messages */
+  .msg { background: var(--bubble); border-radius: 10px; padding: 6px 10px; margin: 4px 0; max-width: 720px; border: 1px solid var(--line); }
+  .msg { border-left: 3px solid var(--who, var(--line)); }
+  /* Mix the person colour toward --ink so names stay readable on the bubble in both themes. */
+  .msg .who { font-weight: 600; font-size: 13px; color: color-mix(in oklab, var(--who, var(--ink)) 70%, var(--ink)); }
+  .msg .meta { color: var(--ink-3); font-size: 12px; float: right; margin-left: 10px; }
+  .msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg .reacts { margin-top: 4px; font-size: 13px; }
+  .msg .note { color: var(--ink-2); font-size: 12px; font-style: italic; }
+  .service, .day { text-align: center; color: var(--ink-3); font-size: 12px; margin: 10px 0; max-width: 720px; }
+  .day span { background: var(--empty); border-radius: 10px; padding: 2px 10px; }
+  #older, #newer { display: block; margin: 0 auto 12px; }
+  #newer { margin: 12px auto 0; }
+  .tabs #jump { margin-left: 8px; width: auto; }
+  /* analytics */
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+  .card.wide { grid-column: 1 / -1; }
+  .card h2 { font-size: 14px; margin: 0 0 12px; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 24px; }
+  .tile b { display: block; font-size: 24px; font-weight: 600; }
+  .tile span { color: var(--ink-2); font-size: 12px; }
+  .heat { display: grid; grid-template-columns: 36px repeat(24, 1fr); gap: 2px; font-size: 11px; color: var(--ink-3); }
+  .heat div { height: 22px; border-radius: 3px; min-width: 0; }
+  .heat .lbl { display: flex; align-items: center; }
+  .heat .hr { height: auto; text-align: center; }
+  .legend { display: flex; align-items: center; gap: 4px; justify-content: flex-end; margin-top: 8px; font-size: 11px; color: var(--ink-3); }
+  .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 180px; border-bottom: 1px solid var(--line); }
+  .bars div { flex: 1; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 1px; }
+  .bars div:hover { opacity: .75; }
+  .axis { display: flex; gap: 2px; font-size: 11px; color: var(--ink-3); height: 16px; }
+  .axis span { flex: 1; white-space: nowrap; overflow: visible; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 500; font-size: 12px; }
+  td.num, th.num { text-align: right; }
+  .share { display: flex; align-items: center; gap: 8px; }
+  .share i { height: 8px; background: var(--accent); border-radius: 0 4px 4px 0; }
+  .words { display: flex; flex-wrap: wrap; gap: 6px; }
+  .words span { background: var(--empty); border-radius: 12px; padding: 2px 10px; }
+  .words small { color: var(--ink-3); margin-left: 4px; }
+  .note { color: var(--ink-2); font-size: 12px; margin: 0 0 10px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; flex: none; }
+  .name { display: inline-flex; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lgd { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 8px; }
+  .lgd span { display: inline-flex; align-items: center; gap: 6px; }
+  .lgd i { width: 10px; height: 10px; border-radius: 2px; }
+  .lgd.line i { width: 14px; height: 2px; border-radius: 1px; }
+  .tip { position: fixed; z-index: 10; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+  .tip div { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .tip div:first-child { color: var(--ink-2); }
+  .tip i { width: 12px; height: 2px; border-radius: 1px; }
+  .tip span { color: var(--ink-2); }
+  .scroll { overflow-x: auto; }
+  .scroll td { white-space: nowrap; }
+  .years { display: flex; gap: 4px; margin-bottom: 8px; }
+  .years button { padding: 2px 8px; font-size: 12px; }
+  .years button[aria-pressed="true"] { border-color: var(--accent); }
+  .cal { display: grid; grid-template-columns: 28px; grid-auto-columns: 11px; grid-template-rows: 14px; grid-auto-rows: 11px; gap: 2px; font-size: 10px; color: var(--ink-3); width: max-content; }
+  .cal span { white-space: nowrap; line-height: 11px; }
+  .cal i { border-radius: 2px; cursor: pointer; }
+  .cal i:hover, .gb > div:hover i, .stack > div:hover { opacity: .7; }
+  .stack { display: flex; align-items: flex-end; gap: 1px; height: 180px; border-bottom: 1px solid var(--line); }
+  .stack > div { flex: 1; min-width: 0; display: flex; flex-direction: column-reverse; }
+  .stack i { box-shadow: inset 0 1px var(--surface); } /* separator drawn inside, so it never adds height */
+  .stack i:last-child { border-radius: 2px 2px 0 0; }
+  .plot { position: relative; height: 180px; margin-left: 40px; }
+  .plot svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .plot path, .plot line { fill: none; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+  .plot .grid { stroke: var(--line); }
+  .plot .base { stroke: var(--ink-3); }
+  .plot .cross { stroke: var(--ink-3); display: none; }
+  .yl { position: absolute; right: 100%; margin-right: 6px; transform: translateY(-50%); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+  .xax { position: relative; height: 16px; font-size: 11px; color: var(--ink-3); }
+  .plot + .xax { margin-left: 40px; }
+  .xax span { position: absolute; white-space: nowrap; }
+  .gb { display: flex; gap: 10px; height: 150px; border-bottom: 1px solid var(--line); }
+  .gb > div { flex: 1; display: flex; align-items: flex-end; justify-content: center; gap: 2px; }
+  .gb i { flex: 1; max-width: 24px; min-height: 1px; border-radius: 4px 4px 0 0; }
+  .gl { display: flex; gap: 10px; font-size: 11px; color: var(--ink-3); }
+  .gl span { flex: 1; text-align: center; white-space: nowrap; }
+  .hb { display: grid; grid-template-columns: minmax(60px, 140px) 1fr auto; gap: 8px 10px; align-items: center; }
+  .hb .track i { display: block; height: 10px; border-radius: 0 4px 4px 0; min-width: 1px; }
+  .hb small { color: var(--ink-2); white-space: nowrap; }
+  .cloud { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 2px 12px; line-height: 1.15; padding: 8px 0; }
+  .cloud span { color: var(--ink-2); }
+  .cloud span.big { color: var(--ink); font-weight: 600; }
+  .emo span { font-size: 18px; }
+  .emo-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .emo-row .name { width: 120px; flex: none; font-size: 13px; }
+  th[title] { cursor: help; }
+  @media (max-width: 700px) { aside { width: 140px; } .tabs input { width: 120px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Telegram Viewer</h1>
+  <span id="status"></span>
+  <label class="btn btn-primary">Import result.json<input id="file" type="file" accept=".json,application/json" hidden></label>
+</header>
+<main>
+  <aside id="chats" aria-label="Chats"></aside>
+  <section id="content">
+    <div class="empty" id="welcome">
+      <div class="drop" id="drop">
+        <p><b>Drop your Telegram export here</b></p>
+        <p>In Telegram Desktop: Settings → Advanced → Export Telegram data (or a chat's ⋮ menu → Export chat history), choose <b>JSON</b> format, then import the <code>result.json</code>.</p>
+        <p><small>Everything stays on this computer.</small></p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<template id="chat-view">
+  <div class="tabs" role="tablist">
+    <button role="tab" data-tab="messages" aria-selected="true">Messages</button>
+    <button role="tab" data-tab="analytics" aria-selected="false">Analytics</button>
+    <input id="search" type="search" placeholder="Search messages or sender…" aria-label="Search messages">
+    <input id="jump" type="date" aria-label="Jump to date" title="Jump to date">
+  </div>
+  <div class="panel" id="messages"></div>
+  <div class="panel" id="analytics" hidden></div>
+</template>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const PAGE = 200;
+let chatList = [], chatId = null, loaded = [], total = 0, query = '';
+let newest = 0; // offset (counted from the end) of the newest loaded message; >0 after jumping back in time
+
+// All user content goes through textContent: chat exports are untrusted input.
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+const fmt = (n) => n.toLocaleString();
+// Date-only 'YYYY-MM-DD' would parse as UTC midnight and show the previous day west of UTC.
+const fmtDay = (d) => new Date(d.length === 10 ? `${d}T00:00` : d).toLocaleDateString(undefined, { dateStyle: 'medium' });
+
+// The Pages build flips this: the same Flask app then runs in the browser (Pyodide), so exports never leave the device.
+const STATIC_SITE = false;
+let pyCall;
+async function loadPy() {
+  $('#status').textContent = 'Loading Python runtime (first load ~15 MB)…';
+  const { loadPyodide } = await import('https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.mjs');
+  const py = await loadPyodide();
+  await py.loadPackage('micropip');
+  await py.pyimport('micropip').install(['flask', 'vaderSentiment']);
+  py.FS.mkdirTree('/home/pyodide/tg_viewer');
+  for (const f of ['__init__.py', 'app.py', 'analysis.py']) {
+    py.FS.writeFile(`/home/pyodide/tg_viewer/${f}`, await (await fetch(`tg_viewer/${f}`)).text());
+  }
+  return py.runPython(`
+from tg_viewer.app import app
+_client = app.test_client()
+def call(method, path, body):
+    r = _client.open(path, method=method, data=body)
+    return r.status_code, r.get_data(as_text=True)
+call`);
+}
+
+async function api(path, opts) {
+  if (STATIC_SITE) {
+    pyCall ??= loadPy();
+    const body = opts?.body ? await opts.body.text() : null;
+    const [status, text] = (await pyCall)(opts?.method || 'GET', path, body).toJs();
+    const j = JSON.parse(text);
+    if (status >= 400) throw new Error(j.error || `HTTP ${status}`);
+    return j;
+  }
+  const r = await fetch(path, opts);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+async function importFile(file) {
+  $('#status').textContent = `Importing ${file.name}…`;
+  try {
+    const chats = await api('/api/import', { method: 'POST', body: file });
+    $('#status').textContent = `${chats.length} chat${chats.length === 1 ? '' : 's'} imported`;
+    renderChatList(chats);
+  } catch (e) {
+    $('#status').textContent = e.message;
+  }
+}
+
+function renderChatList(chats) {
+  chatList = chats;
+  const aside = $('#chats');
+  aside.replaceChildren(...chats.map((c) => {
+    const b = el('button', null, c.name);
+    b.append(el('small', null, `${fmt(c.count)} messages · ${c.type.replace(/_/g, ' ')}`));
+    b.onclick = () => selectChat(c.id, b);
+    return b;
+  }));
+  if (chats.length) selectChat(chats[0].id, aside.firstChild);
+}
+
+function selectChat(id, btn) {
+  document.querySelectorAll('aside button').forEach((b) => b.setAttribute('aria-current', b === btn));
+  chatId = id; loaded = []; newest = 0; query = '';
+  const content = $('#content');
+  content.replaceChildren($('#chat-view').content.cloneNode(true));
+  content.querySelectorAll('[role=tab]').forEach((t) => t.onclick = () => showTab(t.dataset.tab));
+  let timer;
+  $('#search').oninput = (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { query = e.target.value; loaded = []; newest = 0; loadMessages(); }, 300);
+  };
+  $('#jump').onchange = (e) => e.target.value && jumpTo(e.target.value);
+  loadMessages();
+}
+
+function showTab(tab) {
+  document.querySelectorAll('[role=tab]').forEach((t) => t.setAttribute('aria-selected', t.dataset.tab === tab));
+  $('#messages').hidden = tab !== 'messages';
+  $('#analytics').hidden = tab !== 'analytics';
+  $('#search').hidden = $('#jump').hidden = tab !== 'messages';
+  if (tab === 'analytics') loadStats();
+}
+
+const fetchPage = (params) => api(`/api/chats/${chatId}/messages?${new URLSearchParams({ limit: PAGE, q: query, ...params })}`);
+
+async function loadMessages() {
+  const panel = $('#messages');
+  const res = await fetchPage({ offset: newest + loaded.length });
+  const prevHeight = panel.scrollHeight, firstLoad = loaded.length === 0;
+  loaded = res.messages.concat(loaded);
+  total = res.total;
+  renderMessages();
+  // Keep the reader's place when older messages are prepended; jump to newest on first load.
+  panel.scrollTop = firstLoad ? panel.scrollHeight : panel.scrollHeight - prevHeight;
+}
+
+async function loadNewer() {
+  const off = Math.max(newest - PAGE, 0);
+  const res = await fetchPage({ offset: off, limit: newest - off });
+  loaded = loaded.concat(res.messages);
+  newest = off; total = res.total;
+  renderMessages();
+}
+
+async function jumpTo(day) {
+  showTab('messages');
+  const res = await fetchPage({ date: day });
+  loaded = res.messages; newest = res.offset; total = res.total;
+  renderMessages();
+  const panel = $('#messages'), target = [...panel.querySelectorAll('.day')].find((d) => d.dataset.day >= day);
+  if (target) target.scrollIntoView(); else panel.scrollTop = panel.scrollHeight;
+}
+
+function renderMessages() {
+  const panel = $('#messages');
+  const nodes = [];
+  if (query) nodes.push(el('div', 'service', `${fmt(total)} matching messages`));
+  if (newest + loaded.length < total) {
+    const b = el('button', null, `Load older (${fmt(total - newest - loaded.length)} more)`);
+    b.id = 'older';
+    b.onclick = loadMessages;
+    nodes.push(b);
+  }
+  let day = null;
+  for (const m of loaded) {
+    if (m.date.slice(0, 10) !== day) {
+      day = m.date.slice(0, 10);
+      const d = el('div', 'day'); d.dataset.day = day; d.append(el('span', null, fmtDay(m.date))); nodes.push(d);
+    }
+    if (m.service) {
+      nodes.push(el('div', 'service', `${m.from} ${(m.action || 'service message').replace(/_/g, ' ')} ${m.text}`.trim()));
+      continue;
+    }
+    const b = el('div', 'msg');
+    const rank = chatList[chatId].senders.indexOf(m.from);
+    b.style.setProperty('--who', rank < 0 ? 'var(--c-other)' : `var(--c${rank + 1})`);
+    b.append(el('span', 'meta', m.date.slice(11, 16)), el('div', 'who', m.from));
+    if (m.forwarded_from) b.append(el('div', 'note', `Forwarded from ${m.forwarded_from}`));
+    if (m.reply_to) b.append(el('div', 'note', `↪ reply to #${m.reply_to}`));
+    if (m.media || m.sticker) b.append(el('div', 'note', `[${m.sticker ? `sticker ${m.sticker}` : m.media.replace(/_/g, ' ')}]`));
+    if (m.text) b.append(el('div', 'text', m.text));
+    if (m.reactions?.length) {
+      const rx = el('div', 'words reacts');
+      for (const r of m.reactions) { const sp = el('span', null, `${r.emoji} ${r.count}`); sp.title = r.from.join(', '); rx.append(sp); }
+      b.append(rx);
+    }
+    nodes.push(b);
+  }
+  if (!loaded.length) nodes.push(el('div', 'empty', query ? 'No matches.' : 'No messages.'));
+  if (newest > 0) {
+    const b = el('button', null, `Load newer (${fmt(newest)} more)`);
+    b.id = 'newer';
+    b.onclick = loadNewer;
+    nodes.push(b);
+  }
+  panel.replaceChildren(...nodes);
+}
+
+async function loadStats() {
+  const panel = $('#analytics');
+  if (panel.dataset.chat == chatId) return;
+  panel.dataset.chat = chatId;
+  panel.replaceChildren(el('div', 'empty', 'Crunching numbers…'));
+  renderStats(await api(`/api/chats/${chatId}/stats`));
+}
+
+function card(title, wide) {
+  const c = el('div', wide ? 'card wide' : 'card');
+  c.append(el('h2', null, title));
+  return c;
+}
+
+// Sequential scale: one hue, light → dark. sqrt keeps quiet hours visible next to a busy peak.
+const shade = (v, max) => v ? `color-mix(in oklab, var(--accent) ${Math.round(15 + 85 * Math.sqrt(v / max))}%, var(--surface))` : 'var(--empty)';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const sum = (a) => a.reduce((x, y) => x + y, 0);
+const pct = (v) => (v == null ? '–' : `${Math.round(v * 100)}%`);
+const days = (n) => `${fmt(n)} day${n === 1 ? '' : 's'}`;
+const num = (v, d) => (v == null ? '–' : d ? v.toFixed(d) : fmt(v));
+function human(sec) {
+  if (sec == null) return '–';
+  const d = Math.floor(sec / 86400), h = Math.floor(sec / 3600) % 24, m = Math.floor(sec / 60) % 60, x = Math.round(sec % 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m ${x}s` : `${x}s`;
+}
+
+// One shared tooltip. Any element (or ancestor) with a `_tip(ev)` function returning rows gets it:
+// a row is a heading string or [color|null, value, label]; values lead, labels follow.
+const tipEl = el('div', 'tip');
+tipEl.hidden = true;
+document.body.append(tipEl);
+document.addEventListener('pointermove', (ev) => {
+  let t = ev.target;
+  while (t && !t._tip) t = t.parentNode;
+  if (!t) { tipEl.hidden = true; return; }
+  tipEl.replaceChildren(...t._tip(ev).map((r) => {
+    if (typeof r === 'string') return el('div', null, r);
+    const d = el('div'), k = el('i');
+    if (r[0]) k.style.background = r[0];
+    d.append(k, el('b', null, r[1]), el('span', null, r[2]));
+    return d;
+  }));
+  tipEl.hidden = false;
+  const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  tipEl.style.left = `${ev.clientX + 14 + w > innerWidth ? ev.clientX - w - 14 : ev.clientX + 14}px`;
+  tipEl.style.top = `${ev.clientY + 14 + h > innerHeight ? ev.clientY - h - 14 : ev.clientY + 14}px`;
+});
+document.addEventListener('pointerout', (ev) => { if (!ev.relatedTarget) tipEl.hidden = true; });
+
+function svgEl(tag, attrs) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+function legend(series, line) {
+  const l = el('div', line ? 'lgd line' : 'lgd');
+  for (const sr of series) { const sp = el('span'), i = el('i'); i.style.background = sr.color; sp.append(i, el('span', null, sr.name)); l.append(sp); }
+  return l;
+}
+
+function who(name, color) {
+  const n = el('span', 'name'), sw = el('i', 'sw');
+  sw.style.background = color;
+  n.append(sw, el('span', null, name));
+  n.title = name;
+  return n;
+}
+
+// Tick positions for 'YYYY-MM[-DD]' keys: year boundaries over long spans, month boundaries otherwise.
+function timeTicks(keys) {
+  const long = keys[keys.length - 1].slice(0, 4) - keys[0].slice(0, 4) >= 2, out = [];
+  let last = -Infinity;
+  keys.forEach((k, i) => {
+    const prev = keys[i - 1], m = +k.slice(5, 7) - 1;
+    if (prev && (long ? prev.slice(0, 4) === k.slice(0, 4) : prev.slice(0, 7) === k.slice(0, 7))) return;
+    if (i - last < keys.length / (long ? 14 : 10)) return; // keep labels from colliding
+    out.push([i, long ? k.slice(0, 4) : `${MONTHS[m]}${!prev || !m ? ` ${k.slice(0, 4)}` : ''}`]);
+    last = i;
+  });
+  return out;
+}
+
+// x positions are band centres, shared by bars and lines; n = 1 lands in the middle.
+function xAxis(n, ticks) {
+  const a = el('div', 'xax');
+  for (const [i, label] of ticks) { const sp = el('span', null, label); sp.style.left = `${(i / n) * 100}%`; a.append(sp); }
+  return a;
+}
+
+// Line chart in a stretched SVG (non-scaling strokes) with HTML axis labels, so it reflows with the card.
+// series: [{name, color, values: [number|null], width?}]; null breaks the line.
+function lineChart(labels, ticks, series, { min = 0, max, yTicks, yFmt = (v) => fmt(Math.round(v)), tipFmt = yFmt, zero = false } = {}) {
+  const n = labels.length;
+  max ??= Math.max(1e-9, ...series.flatMap((sr) => sr.values.filter((v) => v != null)));
+  yTicks ??= [min, (min + max) / 2, max];
+  const X = (i) => ((i + 0.5) / n) * 1000, Y = (v) => 100 - ((v - min) / (max - min)) * 100;
+  const wrap = el('div'), plot = el('div', 'plot');
+  const sv = svgEl('svg', { viewBox: '0 0 1000 100', preserveAspectRatio: 'none', role: 'img', 'aria-label': series.map((sr) => sr.name).join(', ') });
+  for (const v of yTicks) {
+    sv.append(svgEl('line', { x1: 0, x2: 1000, y1: Y(v), y2: Y(v), class: zero && v === 0 ? 'base' : 'grid' }));
+    const l = el('span', 'yl', yFmt(v)); l.style.top = `${Y(v)}%`; plot.append(l);
+  }
+  for (const sr of series) {
+    let d = '';
+    sr.values.forEach((v, i) => {
+      if (v == null) return;
+      const joined = i > 0 && sr.values[i - 1] != null, alone = !joined && sr.values[i + 1] == null;
+      d += alone ? `M${X(i) - 8},${Y(v)}h16` : `${joined ? 'L' : 'M'}${X(i)},${Y(v)}`; // isolated point → short dash
+    });
+    sv.append(svgEl('path', { d, stroke: sr.color, 'stroke-width': sr.width || 2 }));
+  }
+  const cross = svgEl('line', { y1: 0, y2: 100, class: 'cross' });
+  sv.append(cross);
+  plot.append(sv);
+  plot._tip = (ev) => {
+    const r = plot.getBoundingClientRect(), i = Math.min(n - 1, Math.max(0, Math.floor(((ev.clientX - r.left) / r.width) * n)));
+    cross.setAttribute('x1', X(i)); cross.setAttribute('x2', X(i)); cross.style.display = 'block';
+    return [labels[i], ...series.map((sr) => [sr.color, sr.values[i] == null ? '–' : tipFmt(sr.values[i]), sr.name])];
+  };
+  plot.onpointerleave = () => { cross.style.display = 'none'; };
+  if (series.length > 1) wrap.append(legend(series, true));
+  wrap.append(plot, xAxis(n, ticks));
+  return wrap;
+}
+
+// Grouped columns, each series normalised to its own total so big and small senders compare by shape.
+function groupedBars(groups, series, unit) {
+  const shares = series.map((sr) => { const t = sum(sr.values) || 1; return sr.values.map((v) => v / t); });
+  const max = Math.max(1e-9, ...shares.flat());
+  const g = el('div', 'gb'), lab = el('div', 'gl'), wrap = el('div');
+  groups.forEach((name, gi) => {
+    const grp = el('div');
+    series.forEach((sr, si) => { const b = el('i'); b.style.height = `${(shares[si][gi] / max) * 100}%`; b.style.background = sr.color; grp.append(b); });
+    grp._tip = () => [name, ...series.map((sr, si) => [sr.color, pct(shares[si][gi]), `${sr.name} · ${fmt(sr.values[gi])} ${unit}`])];
+    g.append(grp);
+    lab.append(el('span', null, name));
+  });
+  if (series.length > 1) wrap.append(legend(series));
+  wrap.append(g, lab);
+  return wrap;
+}
+
+function calendarCard(s) {
+  const counts = new Map(s.calendar.map((d) => [d.day, d.count]));
+  const max = Math.max(...counts.values());
+  const years = [...new Set(s.calendar.map((d) => d.day.slice(0, 4)))].reverse();
+  const c = card('Daily activity', true), box = el('div', 'scroll');
+  const draw = (y) => {
+    const g = el('div', 'cal');
+    g.setAttribute('role', 'img');
+    g.setAttribute('aria-label', `Messages per day in ${y}`);
+    for (const [r, d] of [[0, 'Mon'], [2, 'Wed'], [4, 'Fri']]) { const l = el('span', null, d); l.style.gridArea = `${r + 2} / 1`; g.append(l); }
+    const jan1 = Date.UTC(+y, 0, 1), off = (new Date(jan1).getUTCDay() + 6) % 7; // Mon = 0
+    for (let i = 0, t = jan1; new Date(t).getUTCFullYear() === +y; i++, t += 864e5) {
+      const date = new Date(t), key = date.toISOString().slice(0, 10), col = Math.floor((i + off) / 7) + 2;
+      if (date.getUTCDate() === 1) { const m = el('span', null, MONTHS[date.getUTCMonth()]); m.style.gridArea = `1 / ${col}`; g.append(m); }
+      const v = counts.get(key) || 0, cell = el('i');
+      cell.style.gridArea = `${((i + off) % 7) + 2} / ${col}`;
+      cell.style.background = shade(v, max);
+      cell._tip = () => [fmtDay(key), [null, fmt(v), v === 1 ? 'message' : 'messages'], 'Click to read this day'];
+      cell.onclick = () => jumpTo(key);
+      g.append(cell);
+    }
+    box.replaceChildren(g);
+    requestAnimationFrame(() => { box.scrollLeft = box.scrollWidth; }); // newest days are at the right edge
+  };
+  if (years.length > 1) {
+    const sel = el('div', 'years');
+    for (const y of years) {
+      const b = el('button', null, y);
+      b.onclick = () => { draw(y); sel.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b)); };
+      sel.append(b);
+    }
+    sel.firstChild.setAttribute('aria-pressed', true);
+    c.append(sel);
+  }
+  draw(years[0]);
+  const lg = el('div', 'legend', 'Fewer');
+  for (const f of [0, 0.1, 0.3, 0.6, 1]) { const i = el('i'); i.style.background = shade(f * max, max); lg.append(i); }
+  lg.append(document.createTextNode('More'));
+  c.append(box, lg);
+  return c;
+}
+
+function renderStats(s) {
+  const panel = $('#analytics');
+  if (!s.total) { panel.replaceChildren(el('div', 'empty', 'No messages to analyse.')); return; }
+  // Colour follows the person by message rank: top 8 get palette slots, everyone else shares Other.
+  const people = s.senders.slice(0, 8).map((p, i) => ({ name: p.name, color: `var(--c${i + 1})` }));
+  const colorOf = (name) => people.find((p) => p.name === name)?.color || 'var(--c-other)';
+  const multi = people.length > 1, capNote = s.senders.length > 8 ? ' Top 8 senders shown.' : '';
+  const cards = [];
+
+  const tiles = card('Overview', true);
+  const t = el('div', 'tiles');
+  const span = `${fmtDay(s.first)} – ${fmtDay(s.last)}`;
+  const tileRows = [[fmt(s.total), 'messages'], [s.senders.length, 'participants'],
+    [fmt(s.active_days), 'active days'], [(s.total / s.active_days).toFixed(1), 'messages / active day'], [span, 'date range']];
+  if (s.conversations) {
+    const cv = s.conversations;
+    tileRows.push([fmt(cv.count), 'conversations'], [`${cv.avg_messages.toFixed(1)} msgs · ${human(cv.avg_minutes * 60)}`, 'avg conversation']);
+  }
+  if (s.streak) tileRows.push([days(s.streak.days), 'longest streak', `${fmtDay(s.streak.start)} – ${fmtDay(s.streak.end)}`]);
+  if (s.longest_silence) tileRows.push([days(s.longest_silence.days), 'longest silence', `${fmtDay(s.longest_silence.from)} – ${fmtDay(s.longest_silence.to)}`]);
+  for (const [v, label, title] of tileRows) {
+    const d = el('div', 'tile'); d.append(el('b', null, v), el('span', null, label));
+    if (title) d.title = title;
+    t.append(d);
+  }
+  tiles.append(t);
+  cards.push(tiles);
+
+  if (s.calendar?.length) cards.push(calendarCard(s));
+
+  const heat = card('When you chat · weekday × hour', true);
+  const g = el('div', 'heat');
+  g.setAttribute('role', 'img');
+  g.setAttribute('aria-label', 'Heatmap of message counts by weekday and hour');
+  const max = Math.max(...s.heatmap.flat());
+  g.append(el('div', 'lbl'));
+  for (let h = 0; h < 24; h++) g.append(el('div', 'hr', h % 3 === 0 ? String(h).padStart(2, '0') : ''));
+  s.heatmap.forEach((row, d) => {
+    g.append(el('div', 'lbl', DAYS[d]));
+    row.forEach((v, h) => {
+      const c = el('div');
+      c.style.background = shade(v, max);
+      c.title = `${DAYS[d]} ${String(h).padStart(2, '0')}:00 — ${fmt(v)} messages`;
+      g.append(c);
+    });
+  });
+  const lg = el('div', 'legend', 'Fewer');
+  for (const f of [0, 0.1, 0.3, 0.6, 1]) { const i = el('i'); i.style.background = shade(f * max, max); lg.append(i); }
+  lg.append(document.createTextNode('More'));
+  heat.append(g, lg, el('div', 'legend', 'Times are in the exporting device’s local time zone.'));
+  cards.push(heat);
+
+  const time = card('Messages per month', true);
+  const bars = el('div', 'bars'), axis = el('div', 'axis');
+  const tmax = Math.max(...s.timeline.map((m) => m.count));
+  for (const m of s.timeline) {
+    const b = el('div');
+    b.style.height = `${(m.count / tmax) * 100}%`;
+    b.title = `${m.month}: ${fmt(m.count)} messages`;
+    bars.append(b);
+    axis.append(el('span', null, m.month.endsWith('-01') || s.timeline.length < 13 ? m.month.slice(0, s.timeline.length < 13 ? 7 : 4) : ''));
+  }
+  const peak = s.timeline.reduce((a, b) => (b.count > a.count ? b : a));
+  time.append(el('div', 'legend', `Peak: ${peak.month} (${fmt(peak.count)})`), bars, axis);
+  cards.push(time);
+
+  if (s.weekly?.length) {
+    const weeks = s.weekly, keys = weeks.map((w) => w.week), ticks = timeTicks(keys);
+    const other = s.senders.length > 8 ? [{ name: 'Other', color: 'var(--c-other)' }] : [];
+    const stackSeries = [...people, ...other];
+    const wk = card('Weekly messages', true);
+    const st = el('div', 'stack');
+    const wmax = Math.max(1, ...weeks.map((w) => w.total));
+    for (const w of weeks) {
+      const vals = people.map((p) => w.by_sender[p.name] || 0);
+      if (other.length) vals.push(w.total - sum(vals));
+      const col = el('div');
+      col.style.height = `${(w.total / wmax) * 100}%`;
+      vals.forEach((v, i) => { if (v > 0) { const seg = el('i'); seg.style.height = `${(v / w.total) * 100}%`; seg.style.background = stackSeries[i].color; col.append(seg); } });
+      col._tip = () => [`Week of ${fmtDay(w.week)}`, [null, fmt(w.total), 'total'],
+        ...stackSeries.map((sr, i) => [sr.color, fmt(vals[i]), sr.name]).filter((_, i) => vals[i] > 0)];
+      st.append(col);
+    }
+    if (stackSeries.length > 1) wk.append(legend(stackSeries));
+    wk.append(st, xAxis(weeks.length, ticks));
+    cards.push(wk);
+
+    const act = card('Activity over time', true);
+    const roll = (a, k) => a.map((_, i) => { const w = a.slice(Math.max(0, i - k + 1), i + 1); return sum(w) / w.length; });
+    act.append(el('p', 'note', `Messages per week, 4-week rolling average.${capNote}`),
+      lineChart(keys.map((k) => `Week of ${fmtDay(k)}`), ticks,
+        people.map((p) => ({ ...p, values: roll(weeks.map((w) => w.by_sender[p.name] || 0), 4) })),
+        { tipFmt: (v) => v.toFixed(1) }));
+    cards.push(act);
+  }
+
+  const peopleCard = card('Who talks most', true);
+  const tbl = el('table');
+  const head = el('tr');
+  for (const [h, n] of [['Sender'], ['Share'], ['Messages', 1], ['Words', 1], ['Words / msg', 1], ['Media', 1]]) head.append(el('th', n ? 'num' : null, h));
+  tbl.append(head);
+  for (const p of s.senders) {
+    const tr = el('tr');
+    const share = el('div', 'share'), bar = el('i');
+    bar.style.width = `${(p.messages / s.senders[0].messages) * 120}px`;
+    share.append(bar, el('span', null, `${((p.messages / s.total) * 100).toFixed(1)}%`));
+    const td = el('td'); td.append(share);
+    const nm = el('td'); nm.append(who(p.name, colorOf(p.name)));
+    tr.append(nm, td, el('td', 'num', fmt(p.messages)), el('td', 'num', fmt(p.words)),
+      el('td', 'num', (p.words / p.messages).toFixed(1)), el('td', 'num', fmt(p.media)));
+    tbl.append(tr);
+  }
+  peopleCard.append(tbl);
+  cards.push(peopleCard);
+
+  if (s.senders[0].initiations !== undefined) {
+    const table = (title, cols) => {
+      const c = card(title, true), it = el('table'), hr = el('tr');
+      hr.append(el('th', null, 'Sender'));
+      for (const [h, tip] of cols) { const th = el('th', 'num', `${h} ⓘ`); th.title = tip; hr.append(th); }
+      it.append(hr);
+      for (const p of s.senders) {
+        const tr = el('tr'), nm = el('td');
+        nm.append(who(p.name, colorOf(p.name)));
+        tr.append(nm, ...cols.map(([, , f]) => el('td', 'num', f(p))));
+        it.append(tr);
+      }
+      const box = el('div', 'scroll'); box.append(it);
+      c.append(el('p', 'note', 'Hover a column header for its definition.'), box);
+      cards.push(c);
+    };
+    table('Reply speed', [
+      ['Median', 'Median time to answer someone else’s message within the same conversation (6h+ silence starts a new one).', (p) => human(p.median_response_s)],
+      ['90th pct', '9 in 10 of this person’s replies come faster than this.', (p) => human(p.p90_response_s)],
+      ['95th pct', '19 in 20 of this person’s replies come faster than this.', (p) => human(p.p95_response_s)],
+      ['99th pct', '99 in 100 of this person’s replies come faster than this.', (p) => human(p.p99_response_s)],
+      ['Left on read', 'Times this person answered someone else only after 6+ hours of silence.', (p) => num(p.left_on_read)],
+      ['Got left on read', 'Times someone else answered this person only after 6+ hours of silence.', (p) => num(p.got_left_on_read)],
+    ]);
+    table('Conversation indicators', [
+      ['Starts', 'Share of conversations this person opened. A conversation begins after 6+ hours of silence.', (p) => pct(p.initiation_rate)],
+      ['Words / msg', 'Average words per message.', (p) => num(p.words_per_msg, 1)],
+      ['Lexical div.', 'Lexical diversity (moving-average type-token ratio): share of distinct words in a sliding window. Higher = more varied vocabulary.', (p) => num(p.lexical_diversity, 2)],
+      ['Vocab', 'Number of distinct words used.', (p) => num(p.vocab)],
+      ['Questions', 'Messages containing a question mark.', (p) => num(p.questions)],
+      ['Double texts', 'Times this person sent another message after a long pause with no reply in between.', (p) => num(p.double_texts)],
+      ['Monologue', 'Longest run of consecutive messages without anyone else replying.', (p) => num(p.longest_monologue)],
+      ['Night owl', 'Share of messages sent between midnight and 6 am.', (p) => pct(p.night_share)],
+      ['Emoji', 'Total emoji used.', (p) => num(p.emoji)],
+      ['Reactions got', 'Total reactions on this person’s messages.', (p) => num(p.reactions_received)],
+      ['Reactions given', 'Reactions this person left. Telegram only exports the most recent reactors per message, so this can undercount.', (p) => num(p.reactions_given)],
+    ]);
+
+    if (multi) {
+      const st = card('Who starts the conversation');
+      st.append(el('p', 'note', `A conversation starts after 6+ hours of silence${s.conversations ? ` (${fmt(s.conversations.count)} in total)` : ''}. Bars: share started; right: how many each person ended.${capNote}`));
+      const hb = el('div', 'hb');
+      const rmax = Math.max(1e-9, ...s.senders.slice(0, 8).map((p) => p.initiation_rate || 0));
+      for (const p of s.senders.slice(0, 8)) {
+        const track = el('div', 'track'), b = el('i');
+        b.style.width = `${((p.initiation_rate || 0) / rmax) * 100}%`;
+        b.style.background = colorOf(p.name);
+        track.append(b);
+        track._tip = () => [p.name, [colorOf(p.name), fmt(p.initiations), 'started'], [colorOf(p.name), fmt(p.ends), 'ended']];
+        hb.append(who(p.name, colorOf(p.name)), track, el('small', null, `${pct(p.initiation_rate)} · ${fmt(p.ends)} ended`));
+      }
+      st.append(hb);
+      cards.push(st);
+    }
+  }
+
+  if (s.response_buckets && multi) {
+    const rb = s.response_buckets, series = people.filter((p) => rb.by_sender[p.name]).map((p) => ({ ...p, values: rb.by_sender[p.name] }));
+    if (series.some((sr) => sum(sr.values))) {
+      const lat = card('Response time');
+      lat.append(el('p', 'note', `How quickly each person replies, as a share of their replies.${capNote}`), groupedBars(rb.labels, series, 'replies'));
+      cards.push(lat);
+    }
+  }
+
+  if (s.reply_timeline && multi) {
+    const rt = s.reply_timeline, series = people.map((p) => ({ ...p, values: rt.map((w) => w.by_sender[p.name] ?? null) }));
+    if (series.some((sr) => sr.values.some((v) => v != null))) {
+      // Log scale: reply times span seconds to hours, so a linear axis flattens everything fast.
+      const lg = (v) => Math.log10(Math.max(v, 1)), tick = (v) => human(Math.round(10 ** v)).replace(/ 0[sm]$/, '');
+      for (const sr of series) sr.values = sr.values.map((v) => (v == null ? null : lg(v)));
+      const rc = card('Reply time over time', true);
+      rc.append(el('p', 'note', `Median reply time per week (log scale). Gaps are weeks without replies.${capNote}`),
+        lineChart(rt.map((w) => `Week of ${fmtDay(w.week)}`), timeTicks(rt.map((w) => w.week)), series,
+          { min: 0, max: lg(21600), yTicks: [10, 60, 600, 3600, 21600].map(lg), yFmt: tick, tipFmt: (v) => human(Math.round(10 ** v)) }));
+      cards.push(rc);
+    }
+  }
+
+  if (s.sentiment_timeline?.some((m) => m.score != null)) {
+    const ms = s.sentiment_timeline;
+    const series = [{ name: 'Overall', color: 'var(--ink)', width: 3, values: ms.map((m) => m.score) }];
+    if (multi) series.push(...people.map((p) => ({ ...p, values: ms.map((m) => m.by_sender?.[p.name] ?? null) })));
+    const sc = card('Mood over time', true);
+    const signed = (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}`;
+    sc.append(el('p', 'note', 'Average VADER sentiment per week: −1 most negative, +1 most positive. Gaps are weeks without scorable text.'),
+      lineChart(ms.map((m) => `Week of ${fmtDay(m.week)}`), timeTicks(ms.map((m) => m.week)), series, { min: -1, max: 1, yTicks: [-1, 0, 1], zero: true, yFmt: signed }));
+    cards.push(sc);
+  }
+
+  if (s.top_words.length) {
+    const words = card('Word cloud', true);
+    const ws = s.top_words, hi = Math.sqrt(ws[0].count), lo = Math.sqrt(ws[ws.length - 1].count);
+    const order = [];
+    ws.forEach((x, i) => (i % 2 ? order.push(x) : order.unshift(x))); // biggest words end up in the middle
+    const cl = el('div', 'cloud');
+    for (const x of order) {
+      const sp = el('span', ws.indexOf(x) < 10 ? 'big' : null, x.word);
+      sp.style.fontSize = `${12 + (28 * (Math.sqrt(x.count) - lo)) / (hi - lo || 1)}px`;
+      sp._tip = () => [x.word, [null, fmt(x.count), 'uses']];
+      cl.append(sp);
+    }
+    words.append(cl);
+    cards.push(words);
+  }
+
+  const chips = (list) => { const w = el('div', 'words emo'); for (const x of list) { const sp = el('span', null, x.emoji); sp.append(el('small', null, fmt(x.count))); w.append(sp); } return w; };
+  if (s.reactions?.length) {
+    const rc = card('Reactions');
+    rc.append(chips(s.reactions));
+    cards.push(rc);
+  }
+  if (s.emoji?.length) {
+    const ec = card('Emoji');
+    ec.append(chips(s.emoji));
+    if (multi) {
+      for (const p of s.senders.slice(0, 8)) {
+        if (!p.top_emoji?.length) continue;
+        const row = el('div', 'emo-row');
+        row.append(who(p.name, colorOf(p.name)), chips(p.top_emoji.slice(0, 5)));
+        ec.append(row);
+      }
+    }
+    cards.push(ec);
+  }
+
+  const busy = card('Busiest days');
+  const bt = el('table');
+  for (const d of s.busiest_days) { const tr = el('tr'); tr.append(el('td', null, fmtDay(d.day)), el('td', 'num', `${fmt(d.count)} messages`)); bt.append(tr); }
+  busy.append(bt);
+  cards.push(busy);
+
+  const grid = el('div', 'grid');
+  grid.append(...cards);
+  panel.replaceChildren(grid);
+}
+
+$('#file').onchange = (e) => e.target.files[0] && importFile(e.target.files[0]);
+document.addEventListener('dragover', (e) => { e.preventDefault(); $('#drop')?.classList.add('over'); });
+document.addEventListener('dragleave', () => $('#drop')?.classList.remove('over'));
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  $('#drop')?.classList.remove('over');
+  if (e.dataTransfer.files[0]) importFile(e.dataTransfer.files[0]);
+});
+</script>
+</body>
+</html>

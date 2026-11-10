@@ -1,0 +1,24 @@
+[project]
+name = "tg-viewer"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Spyobird", email = "elliotlimzy@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.1.3",
+    "vadersentiment>=3.3.2",
+]
+
+[project.scripts]
+tg-viewer = "tg_viewer:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
